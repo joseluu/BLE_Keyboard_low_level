@@ -1,3 +1,4 @@
+#define CONFIG_ARDUHAL_LOG_DEFAULT_LEVEL 3
 #include <BLEDevice.h>
 #include <BLEUtils.h>
 #include <BLEServer.h>
@@ -7,9 +8,22 @@
 #include "HIDKeyboardTypes.h"
 #include <driver/adc.h>
 #include "sdkconfig.h"
+#include "esp_log.h"
+#include "esp32-hal-log.h"
 
+//#include "esp_app_trace.h"
+
+// configuration for esp32s3 supermini
+// Device: ESP32S3 Dev module
+// USB CDC On boot enabled
+// Jtag adapter disabled
+// Upload mode UART0/ hardware CDC
+// Usb mode: Hardware CDC and jtag
+
+#include <Bounce2.h>
 
 #include "keyboardData.h" 
+
 
 //
 //  inspired by   : https://github.com/nkolban/esp32-snippets/issues/230#issuecomment-473135679
@@ -17,7 +31,8 @@
 
 BLEHIDDevice* hid;
 
-const char keyboardName[]="RemoteSpace";
+const char keyboardName[]="Dance_Remote_Jose";
+static const char* TAG = &keyboardName[0];
 
 bool connected = false;
 static BLECharacteristic *inputKeyboard = nullptr;
@@ -56,11 +71,6 @@ class CharacteristicCallbacks : public BLECharacteristicCallbacks
     {
     }
 };
-
-
-
-
-
 
 BLEServerCallbacks *pServerCallbacks = nullptr;
 BLECharacteristicCallbacks  *pCharacteristicCallbacks = nullptr;
@@ -125,75 +135,82 @@ void taskServer(void*){
 
 };
 
-// http://www.keil.com/forum/15671/usb-mouse-with-scroll-wheel/
-// Wheel Mouse - simplified version - 5 button, vertical and horizontal wheel
-//
-// Input report - 5 bytes
-//
-//     Byte | D7      D6      D5      D4      D3      D2      D1      D0
-//    ------+---------------------------------------------------------------------
-//      0   |  0       0       0    Forward  Back    Middle  Right   Left (Buttons)
-//      1   |                             X
-//      2   |                             Y
-//      3   |                       Vertical Wheel
-//      4   |                    Horizontal (Tilt) Wheel
-//
-// Feature report - 1 byte
-//
-//     Byte | D7      D6      D5      D4   |  D3      D2  |   D1      D0
-//    ------+------------------------------+--------------+----------------
-//      0   |  0       0       0       0   |  Horizontal  |    Vertical
-//                                             (Resolution multiplier)
-//
-// Reference
-//    Wheel.docx in "Enhanced Wheel Support in Windows Vista" on MS WHDC
-//    http://www.microsoft.com/whdc/device/input/wheel.mspx
-//
+const int button1Pin = 4;     // the number of the pushbutton pin
+const int button2Pin = 5;     // the number of the pushbutton pin
+const int button3Pin = 6;     // the number of the pushbutton pin
+const int button4Pin = 7;     // the number of the pushbutton pin
+const int ledPin =     48;      // the number of the LED pin
 
+//Button button1(button1Pin); // Connect your button between pin 2 and GND
+Bounce2::Button button1 = Bounce2::Button();
+Bounce2::Button button2 = Bounce2::Button();
+Bounce2::Button button3 = Bounce2::Button();
+Bounce2::Button button4 = Bounce2::Button();
 
-const int button1Pin = 39;     // the number of the pushbutton pin
-const int button2Pin = 38;     // the number of the pushbutton pin
-const int ledPin =     5;      // the number of the LED pin
-
-void setup() {
+void setup() {                                             
   Serial.begin(115200);
+  Serial.println();
   Serial.println("Starting BLE work!");
 
-  pinMode(button1Pin, INPUT_PULLUP);
-  pinMode(button2Pin, INPUT_PULLUP);
+    //button1.begin();
+    button1.attach(button1Pin, INPUT_PULLUP);
+    button1.interval(50);
+    button1.setPressedState(LOW);
+    button2.attach(button2Pin, INPUT_PULLUP);
+    button2.interval(50);
+    button2.setPressedState(LOW); 
+    button3.attach(button3Pin, INPUT_PULLUP);
+    button3.interval(50);
+    button3.setPressedState(LOW); 
+    button4.attach(button4Pin, INPUT_PULLUP);
+    button4.interval(50);
+    button4.setPressedState(LOW); 
+
   pinMode(ledPin, OUTPUT);
 
   xTaskCreate(taskServer, "server", 20000, NULL, 5, NULL);
 }
 
+static bool button1_pressed;
+
 void loop() {
-  if(connected){
-
-    //vTaskDelay(5000);Serial.println("dormindo");
-    if (true) {
-      Serial.println("key space");
-      keyboard_write(' ');
-      delay(10);
-
-      delay(5000);
-      Serial.println("key space");
-      keyboard_write(' ');
-      delay(5000);
-    } else {
-      while (digitalRead(button2Pin) ==  LOW ){ 
-        Serial.println("key space");
-        keyboard_write(' ');
-        delay(10);
-      }
-      while (digitalRead(button1Pin) ==  LOW ){ 
-        Serial.println("key space");
-        keyboard_write(' ');
-        delay(10);
-      }
+    button1.update();
+    button2.update();
+    button3.update();
+    button4.update();
+            //vTaskDelay(5000);Serial.println("dormindo");
+    if(connected){
+        if (button1.rose()) {
+            digitalWrite(ledPin, HIGH);
+            Serial.println("key space");
+            keyboard_write(' ');
+            delay(10);
+        }
+        if (button2.rose()) {
+            digitalWrite(ledPin, HIGH);
+            Serial.println("key up arrow");
+            keyboard_write(0xDA);
+            delay(10);
+        }
+        if (button3.rose()) {
+            digitalWrite(ledPin, HIGH);
+            Serial.println("key down arrow");
+            keyboard_write(0xD9);
+            delay(10);
+        }
+        if (button4.rose()) {
+            digitalWrite(ledPin, HIGH);
+            Serial.println("key home");
+            keyboard_write(0xD2);
+            delay(10);
+        }
     }
-  }
-  delay(50);
+    delay(50);
 }
+
+// keys are defined here:
+// AppData\Local\Arduino15\packages\esp32\hardware\esp32\3.2.0\libraries\BLE\src/HIDKeyboardTypes.h:54
+
 
 //  Low level key report: up to 6 keys and shift, ctrl etc at once
 typedef struct {
@@ -207,23 +224,6 @@ typedef uint8_t MediaKeyReport[2];
 void keyboard_sendReport(KeyReport* keys);
 
 void keyboard_sendReport(MediaKeyReport* keys);
-
-const MediaKeyReport KEY_MEDIA_NEXT_TRACK = {1, 0};
-const MediaKeyReport KEY_MEDIA_PREVIOUS_TRACK = {2, 0};
-const MediaKeyReport KEY_MEDIA_STOP = {4, 0};
-const MediaKeyReport KEY_MEDIA_PLAY_PAUSE = {8, 0};
-const MediaKeyReport KEY_MEDIA_MUTE = {16, 0};
-const MediaKeyReport KEY_MEDIA_VOLUME_UP = {32, 0};
-const MediaKeyReport KEY_MEDIA_VOLUME_DOWN = {64, 0};
-const MediaKeyReport KEY_MEDIA_WWW_HOME = {128, 0};
-const MediaKeyReport KEY_MEDIA_LOCAL_MACHINE_BROWSER = {0, 1}; // Opens "My Computer" on Windows
-const MediaKeyReport KEY_MEDIA_CALCULATOR = {0, 2};
-const MediaKeyReport KEY_MEDIA_WWW_BOOKMARKS = {0, 4};
-const MediaKeyReport KEY_MEDIA_WWW_SEARCH = {0, 8};
-const MediaKeyReport KEY_MEDIA_WWW_STOP = {0, 16};
-const MediaKeyReport KEY_MEDIA_WWW_BACK = {0, 32};
-const MediaKeyReport KEY_MEDIA_CONSUMER_CONTROL_CONFIGURATION = {0, 64}; // Media Selection
-const MediaKeyReport KEY_MEDIA_EMAIL_READER = {0, 128};
 
 
 KeyReport          _keyReport;
@@ -316,7 +316,6 @@ size_t keyboard_write(uint8_t c)
     release(c);            // Keyup
     return p;              // just return the result of press() since release() almost always returns 1
 }
-
 
 
 void keyboard_sendReport(KeyReport* keys)
