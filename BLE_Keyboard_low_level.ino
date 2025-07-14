@@ -8,8 +8,7 @@
 #include "HIDKeyboardTypes.h"
 #include <driver/adc.h>
 #include "sdkconfig.h"
-#include "esp_log.h"
-#include "esp32-hal-log.h"
+#include "esp_sleep.h"
 
 //#include "esp_app_trace.h"
 
@@ -29,7 +28,7 @@
 //  inspired by   : https://github.com/nkolban/esp32-snippets/issues/230#issuecomment-473135679
 //
 
-BLEHIDDevice* hid;
+
 
 const char keyboardName[]="Dance_Remote_Jose";
 static const char* TAG = &keyboardName[0];
@@ -74,12 +73,15 @@ class CharacteristicCallbacks : public BLECharacteristicCallbacks
 
 BLEServerCallbacks *pServerCallbacks = nullptr;
 BLECharacteristicCallbacks  *pCharacteristicCallbacks = nullptr;
+BLEServer *pServer;
+BLEHIDDevice* hid;
+BLEAdvertising *pAdvertising;
 
 void taskServer(void*){
 
 
     BLEDevice::init(keyboardName);
-    BLEServer *pServer = BLEDevice::createServer();
+    pServer = BLEDevice::createServer();
     pServerCallbacks = new ServerCallbacks();
     if (!pServerCallbacks) {
         log_e("Memory request failed, unable to create a new ServerCallbacks object");
@@ -124,7 +126,7 @@ void taskServer(void*){
   hid->reportMap((uint8_t*)reportMapKeyboard, sizeof(reportMapKeyboard));
   hid->startServices();
 
-  BLEAdvertising *pAdvertising = pServer->getAdvertising();
+  pAdvertising = pServer->getAdvertising();
   pAdvertising->setAppearance(HID_KEYBOARD);
   pAdvertising->addServiceUUID(hid->hidService()->getUUID());
   pAdvertising->start();
@@ -135,11 +137,11 @@ void taskServer(void*){
 
 };
 
-const int button1Pin = 4;     // the number of the pushbutton pin
-const int button2Pin = 5;     // the number of the pushbutton pin
-const int button3Pin = 6;     // the number of the pushbutton pin
-const int button4Pin = 7;     // the number of the pushbutton pin
-const int ledPin =     48;      // the number of the LED pin
+const gpio_num_t button1Pin = (gpio_num_t)4;     // the number of the pushbutton pin
+const gpio_num_t button2Pin = (gpio_num_t)5;     // the number of the pushbutton pin
+const gpio_num_t button3Pin = (gpio_num_t)6;     // the number of the pushbutton pin
+const gpio_num_t button4Pin = (gpio_num_t)7;     // the number of the pushbutton pin
+const gpio_num_t ledPin =     (gpio_num_t)48;      // the number of the LED pin
 
 //Button button1(button1Pin); // Connect your button between pin 2 and GND
 Bounce2::Button button1 = Bounce2::Button();
@@ -147,10 +149,63 @@ Bounce2::Button button2 = Bounce2::Button();
 Bounce2::Button button3 = Bounce2::Button();
 Bounce2::Button button4 = Bounce2::Button();
 
+#define WAKEUP_PIN      (gpio_num_t)4
+#ifndef ESP_GPIO_WAKEUP_GPIO_LOW
+#define ESP_GPIO_WAKEUP_GPIO_LOW 0
+#endif
+#define WAKEUP_LEVEL    ESP_GPIO_WAKEUP_GPIO_LOW
+
+#define LEVEL_DEEP_SLEEP
+
+#ifdef LEVEL_DEEP_SLEEP
+void setup_wakeup(){
+    return;
+    const gpio_config_t config = {
+        .pin_bit_mask = BIT(WAKEUP_PIN),
+        .mode = GPIO_MODE_INPUT,
+    }; 
+    //ESP_ERROR_CHECK(gpio_config(&config));
+    ESP_ERROR_CHECK(esp_sleep_enable_ulp_wakeup());
+    if (esp_sleep_is_valid_wakeup_gpio(WAKEUP_PIN)) {
+        ESP_ERROR_CHECK(esp_sleep_enable_ext1_wakeup(0xF8, ESP_EXT1_WAKEUP_ANY_LOW));
+        esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_PERIPH, ESP_PD_OPTION_ON);  // keep the pull-ups
+        Serial.printf("Enabling deep_sleep GPIO wakeup on pin GPIO%d\n", WAKEUP_PIN);
+    } else {
+        Serial.printf("invalid deep_sleep wakeup on pin GPIO%d\n", WAKEUP_PIN);
+    }
+}
+#else 
+void setup_wakeup(){   
+    esp_sleep_enable_gpio_wakeup();   
+    gpio_wakeup_enable(button1Pin, GPIO_INTR_LOW_LEVEL );
+    gpio_wakeup_enable(button2Pin, GPIO_INTR_LOW_LEVEL);
+    gpio_wakeup_enable(button3Pin, GPIO_INTR_LOW_LEVEL);
+    gpio_wakeup_enable(button4Pin, GPIO_INTR_LOW_LEVEL); 
+}
+#endif
+void wake_from_light_sleep(){
+    Serial.begin(115200);
+    Serial.println();
+    Serial.println("Waking up!" ); 
+    digitalWrite(ledPin, HIGH);
+    delay(200);
+    digitalWrite(ledPin, LOW);
+    delay(200); 
+    digitalWrite(ledPin, HIGH);
+    delay(200);
+    digitalWrite(ledPin, LOW);
+    hid->startServices();   
+    pAdvertising->start(); 
+}
+
+void esp_wake_deep_sleep(){
+    wake_from_light_sleep();
+}
+
 void setup() {                                             
-  Serial.begin(115200);
-  Serial.println();
-  Serial.println("Starting BLE work!");
+    Serial.begin(115200);
+    Serial.println();
+    Serial.println("Starting BLE work!" );
 
     //button1.begin();
     button1.attach(button1Pin, INPUT_PULLUP);
@@ -166,9 +221,11 @@ void setup() {
     button4.interval(50);
     button4.setPressedState(LOW); 
 
-  pinMode(ledPin, OUTPUT);
+    pinMode(ledPin, OUTPUT);
 
-  xTaskCreate(taskServer, "server", 20000, NULL, 5, NULL);
+    setup_wakeup();
+
+    xTaskCreate(taskServer, "server", 20000, NULL, 5, NULL);
 }
 
 static bool button1_pressed;
@@ -203,6 +260,13 @@ void loop() {
             Serial.println("key home");
             keyboard_write(0xD2);
             delay(10);
+            digitalWrite(ledPin, LOW);
+#ifdef LEVEL_DEEP_SLEEP
+            esp_deep_sleep_start();
+#else
+            esp_light_sleep_start();
+            wake_from_light_sleep();
+#endif
         }
     }
     delay(50);
