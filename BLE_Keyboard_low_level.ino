@@ -9,7 +9,7 @@
 #include <driver/adc.h>
 #include "sdkconfig.h"
 #include "esp_sleep.h"
-
+#include "driver/rtc_io.h"
 //#include "esp_app_trace.h"
 
 // configuration for esp32s3 supermini
@@ -160,22 +160,21 @@ Bounce2::Button button4 = Bounce2::Button();
 #ifdef LEVEL_DEEP_SLEEP
 void setup_wakeup(){
     return;
-    const gpio_config_t config = {
-        .pin_bit_mask = BIT(WAKEUP_PIN),
-        .mode = GPIO_MODE_INPUT,
-    }; 
-    //ESP_ERROR_CHECK(gpio_config(&config));
-    ESP_ERROR_CHECK(esp_sleep_enable_ulp_wakeup());
+    rtc_gpio_init(GPIO_NUM_4); // Initializes the pin as an RTC GPIO.
+    rtc_gpio_set_direction(GPIO_NUM_4, RTC_GPIO_MODE_INPUT_ONLY);
+    rtc_gpio_pullup_en(GPIO_NUM_4);
+    //ESP_ERROR_CHECK(esp_sleep_enable_ulp_wakeup());
     if (esp_sleep_is_valid_wakeup_gpio(WAKEUP_PIN)) {
-        ESP_ERROR_CHECK(esp_sleep_enable_ext1_wakeup(0xF8, ESP_EXT1_WAKEUP_ANY_LOW));
+        ESP_ERROR_CHECK(esp_sleep_enable_ext1_wakeup(1ULL<<WAKEUP_PIN, ESP_EXT1_WAKEUP_ANY_LOW));
+        //ESP_ERROR_CHECK(esp_sleep_enable_ext0_wakeup(button1Pin, 0)); // 0 = wake on low level
         esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_PERIPH, ESP_PD_OPTION_ON);  // keep the pull-ups
         Serial.printf("Enabling deep_sleep GPIO wakeup on pin GPIO%d\n", WAKEUP_PIN);
     } else {
         Serial.printf("invalid deep_sleep wakeup on pin GPIO%d\n", WAKEUP_PIN);
     }
 }
-#else 
-void setup_wakeup(){   
+#else
+void setup_wakeup(){
     esp_sleep_enable_gpio_wakeup();   
     gpio_wakeup_enable(button1Pin, GPIO_INTR_LOW_LEVEL );
     gpio_wakeup_enable(button2Pin, GPIO_INTR_LOW_LEVEL);
@@ -207,7 +206,14 @@ void setup() {
     Serial.println();
     Serial.println("Starting BLE work!" );
 
-    //button1.begin();
+    // Check wakeup cause
+    esp_sleep_wakeup_cause_t wakeup_cause = esp_sleep_get_wakeup_cause();
+    if (wakeup_cause == ESP_SLEEP_WAKEUP_EXT1) {
+        printf("Woke up from deep sleep due to GPIO4 going low\n");
+    } else {
+        printf("Initial boot or other wakeup cause\n");
+    }
+
     button1.attach(button1Pin, INPUT_PULLUP);
     button1.interval(50);
     button1.setPressedState(LOW);
@@ -262,7 +268,32 @@ void loop() {
             delay(10);
             digitalWrite(ledPin, LOW);
 #ifdef LEVEL_DEEP_SLEEP
+            rtc_gpio_init(GPIO_NUM_4); // Initializes the pin as an RTC GPIO.
+            rtc_gpio_set_direction(GPIO_NUM_4, RTC_GPIO_MODE_INPUT_ONLY);
+            //ESP_ERROR_CHECK(esp_sleep_enable_ulp_wakeup());
+            if (esp_sleep_is_valid_wakeup_gpio(WAKEUP_PIN)) {
+                ESP_ERROR_CHECK(esp_sleep_enable_ext1_wakeup(1ULL<<WAKEUP_PIN, ESP_EXT1_WAKEUP_ANY_LOW));
+                //ESP_ERROR_CHECK(esp_sleep_enable_ext0_wakeup(button1Pin, 0)); // 0 = wake on low level
+                esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_PERIPH, ESP_PD_OPTION_ON);  // keep the pull-ups
+                Serial.printf("Enabling deep_sleep GPIO wakeup on pin GPIO%d\n", WAKEUP_PIN);
+            } else {
+                Serial.printf("invalid deep_sleep wakeup on pin GPIO%d\n", WAKEUP_PIN);
+            }
+            rtc_gpio_pullup_en(button1Pin);
+            rtc_gpio_pulldown_dis(button1Pin);
+            rtc_gpio_hold_en(button1Pin);
+            esp_sleep_enable_ext1_wakeup(1ULL<<WAKEUP_PIN, ESP_EXT1_WAKEUP_ANY_LOW);
+            uint64_t wakeup_pin_mask = esp_sleep_get_ext1_wakeup_status();
+            if (wakeup_pin_mask != 0) {
+                int pin = __builtin_ffsll(wakeup_pin_mask) - 1;
+                Serial.printf("Will wake up from GPIO %d\n", pin);
+            } else {
+                Serial.printf("May not wake up from GPIO\n");
+            }
+    // Optional: Add a small delay to avoid immediate sleep if button is held
+            vTaskDelay(500 / portTICK_PERIOD_MS);
             esp_deep_sleep_start();
+
 #else
             esp_light_sleep_start();
             wake_from_light_sleep();
