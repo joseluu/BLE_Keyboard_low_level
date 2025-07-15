@@ -156,25 +156,35 @@ Bounce2::Button button4 = Bounce2::Button();
 #define WAKEUP_LEVEL    ESP_GPIO_WAKEUP_GPIO_LOW
 
 #define LEVEL_DEEP_SLEEP
+ 
+#ifdef LEVEL_DEEP_SLEEP  
+void do_deep_sleep(int wakeup_gpio_pin){ 
+    gpio_num_t gpio_num = (gpio_num_t) wakeup_gpio_pin;
 
-#ifdef LEVEL_DEEP_SLEEP 
-void do_deep_sleep(int gpio_pin){
+// attempt to shutoff the led during deep sleep
+    rtc_gpio_init(ledPin);
+    rtc_gpio_set_direction(ledPin, RTC_GPIO_MODE_OUTPUT_ONLY);
+    rtc_gpio_set_level(ledPin, 0);
+    // rtc_gpio_pullup_dis(ledPin);
+    // rtc_gpio_pulldown_dis(ledPin);
+// rtc_gpio_isolate(gpio_num_t gpio_num);
+
     rtc_gpio_init(GPIO_NUM_4); // Initializes the pin as an RTC GPIO.
     rtc_gpio_set_direction(GPIO_NUM_4, RTC_GPIO_MODE_INPUT_ONLY);
     rtc_gpio_pullup_en(GPIO_NUM_4);
     //ESP_ERROR_CHECK(esp_sleep_enable_ulp_wakeup());
-    if (esp_sleep_is_valid_wakeup_gpio(WAKEUP_PIN)) {
-        ESP_ERROR_CHECK(esp_sleep_enable_ext1_wakeup(1ULL<<WAKEUP_PIN, ESP_EXT1_WAKEUP_ANY_LOW));
+    if (esp_sleep_is_valid_wakeup_gpio(gpio_num)) {
+        ESP_ERROR_CHECK(esp_sleep_enable_ext1_wakeup(1ULL << wakeup_gpio_pin, ESP_EXT1_WAKEUP_ANY_LOW));
         //ESP_ERROR_CHECK(esp_sleep_enable_ext0_wakeup(button1Pin, 0)); // 0 = wake on low level
         esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_PERIPH, ESP_PD_OPTION_ON);  // keep the pull-ups
-        Serial.printf("Enabling deep_sleep GPIO wakeup on pin GPIO%d\n", WAKEUP_PIN);
+        Serial.printf("Enabling deep_sleep GPIO wakeup on pin GPIO%d\n", wakeup_gpio_pin);
     } else {
-        Serial.printf("invalid deep_sleep wakeup on pin GPIO%d\n", WAKEUP_PIN);
+        Serial.printf("invalid deep_sleep wakeup on pin GPIO%d\n", wakeup_gpio_pin);
     }
-    rtc_gpio_pullup_en(button1Pin);
-    rtc_gpio_pulldown_dis(button1Pin);
-    rtc_gpio_hold_en(button1Pin);
-    esp_sleep_enable_ext1_wakeup(1ULL<<WAKEUP_PIN, ESP_EXT1_WAKEUP_ANY_LOW);
+    rtc_gpio_pullup_en(gpio_num);
+    rtc_gpio_pulldown_dis(gpio_num);
+    rtc_gpio_hold_en(gpio_num);
+    esp_sleep_enable_ext1_wakeup(1ULL << wakeup_gpio_pin, ESP_EXT1_WAKEUP_ANY_LOW);
     uint64_t wakeup_pin_mask = esp_sleep_get_ext1_wakeup_status();
     if (wakeup_pin_mask != 0) {
         int pin = __builtin_ffsll(wakeup_pin_mask) - 1;
@@ -234,10 +244,19 @@ void setup() {
     Serial.println();
     Serial.println("Starting BLE work!" );
 
+    pinMode(ledPin, OUTPUT); 
+
     // Check wakeup cause
     esp_sleep_wakeup_cause_t wakeup_cause = esp_sleep_get_wakeup_cause();
     if (wakeup_cause == ESP_SLEEP_WAKEUP_EXT1) {
         printf("Woke up from deep sleep due to GPIO4 going low\n");
+        digitalWrite(ledPin, HIGH);
+        delay(200);
+        digitalWrite(ledPin, LOW);
+        delay(200); 
+        digitalWrite(ledPin, HIGH);
+        delay(200);
+        digitalWrite(ledPin, LOW);
     } else {
         printf("Initial boot or other wakeup cause\n");
     }
@@ -255,7 +274,6 @@ void setup() {
     button4.interval(50);
     button4.setPressedState(LOW); 
 
-    pinMode(ledPin, OUTPUT);
 
     setup_wakeup();
 
@@ -273,6 +291,8 @@ void loop() {
     if(connected){
         if (button1.rose()) {
             digitalWrite(ledPin, HIGH);
+            delay(200);
+            //digitalWrite(ledPin, LOW);
             Serial.println("key space");
             keyboard_write(' ');
             delay(10);
@@ -296,7 +316,7 @@ void loop() {
             delay(10);
             digitalWrite(ledPin, LOW);
 #ifdef LEVEL_DEEP_SLEEP
-            do_deep_sleep(button4.getPin());
+            do_deep_sleep(button1.getPin());
 #else
             esp_light_sleep_start();
             wake_from_light_sleep();
